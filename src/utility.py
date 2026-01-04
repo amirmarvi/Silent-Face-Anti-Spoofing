@@ -25,9 +25,15 @@ def get_width_height(patch_info):
 
 
 def parse_model_name(model_name):
-    info = model_name.split('_')[0:-1]
+    """
+    Support parsing both .pth and .onnx model file names.
+    Expected pattern: "{scale}_{...}_{h}x{w}_{ModelType}.ext".
+    """
+    base_name = os.path.basename(model_name)
+    name_no_ext, _ = os.path.splitext(base_name)
+    info = name_no_ext.split('_')[0:-1]
     h_input, w_input = info[-1].split('x')
-    model_type = model_name.split('.pth')[0].split('_')[-1]
+    model_type = name_no_ext.split('_')[-1]
 
     if info[0] == "org":
         scale = None
