@@ -6,9 +6,9 @@
 import argparse
 import glob
 import os
-import time
 import warnings
 from typing import List, Optional, Sequence, Tuple
+import time
 
 import cv2
 import numpy as np
@@ -71,7 +71,28 @@ def preprocess_image(image: np.ndarray, bbox: list[int], scale: Optional[float],
     return resized.astype(np.float32).transpose(2, 0, 1)[np.newaxis, ...]
 
 
-def compare_models(image_path: str, model_paths: Sequence[str], use_gpu: bool, save_vis: bool, output_dir: str) -> None:
+def run_session(session: ort.InferenceSession, input_blob: np.ndarray, repeat: int, warmup: int) -> Tuple[np.ndarray, float]:
+    ort_inputs = {session.get_inputs()[0].name: input_blob}
+    for _ in range(max(warmup, 0)):
+        session.run(None, ort_inputs)
+
+    start = time.perf_counter()
+    for _ in range(max(repeat, 1)):
+        output = session.run(None, ort_inputs)[0]
+    elapsed = time.perf_counter() - start
+    avg_ms = (elapsed / max(repeat, 1)) * 1000.0
+    return output, avg_ms
+
+
+def compare_models(
+    image_path: str,
+    model_paths: Sequence[str],
+    use_gpu: bool,
+    save_vis: bool,
+    output_dir: str,
+    repeat: int,
+    warmup: int,
+) -> None:
     detector = Detection()
     cropper = CropImage()
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if use_gpu else ["CPUExecutionProvider"]
@@ -93,14 +114,13 @@ def compare_models(image_path: str, model_paths: Sequence[str], use_gpu: bool, s
         h_input, w_input, _, scale = parse_model_name(os.path.basename(model_path))
         input_blob = preprocess_image(image, bbox, scale, h_input, w_input, cropper)
 
-        start = time.time()
-        ort_inputs = {session.get_inputs()[0].name: input_blob}
-        raw_output = session.run(None, ort_inputs)[0]
-        elapsed = time.time() - start
+        raw_output, avg_ms = run_session(session, input_blob, repeat, warmup)
 
         probs = softmax(raw_output)
         prediction_sum += probs
-        per_model_results.append((model_path, float(probs[0][0]), float(probs[0][1]), float(probs[0][2]), elapsed))
+        per_model_results.append(
+            (model_path, float(probs[0][0]), float(probs[0][1]), float(probs[0][2]), avg_ms)
+        )
 
     avg_prediction = prediction_sum / len(sessions)
     label = int(np.argmax(avg_prediction))
@@ -109,8 +129,10 @@ def compare_models(image_path: str, model_paths: Sequence[str], use_gpu: bool, s
 
     print(f"Processed image: {image_path}")
     for path, p0, p1, p2, cost in per_model_results:
-        print(f"- {os.path.basename(path)} -> [spoof:{p0:.3f}, real:{p1:.3f}, unsure:{p2:.3f}] "
-              f"inference {cost*1000:.1f} ms")
+        print(
+            f"- {os.path.basename(path)} -> [spoof:{p0:.3f}, real:{p1:.3f}, unsure:{p2:.3f}] "
+            f"avg inference {cost:.2f} ms over {repeat} run(s) (warmup {warmup})"
+        )
     print(f"Average verdict: {verdict} (score={score:.3f}) using {len(sessions)} model(s)")
 
     if save_vis:
@@ -175,6 +197,18 @@ def parse_args() -> argparse.Namespace:
         default="./images/sample",
         help="Folder for annotated results when --save_vis is enabled.",
     )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Number of timed runs per model to average for speed benchmarking.",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=1,
+        help="Warmup runs per model before timing (helps stabilize GPU clocks).",
+    )
     return parser.parse_args()
 
 
@@ -187,4 +221,6 @@ if __name__ == "__main__":
         use_gpu=args.use_gpu,
         save_vis=args.save_vis,
         output_dir=args.output_dir,
+        repeat=args.repeat,
+        warmup=args.warmup,
     )
