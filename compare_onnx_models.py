@@ -58,7 +58,7 @@ def prepare_sessions(model_paths: Sequence[str], providers: Sequence[str]) -> Li
     return sessions
 
 
-def preprocess_image(image: np.ndarray, bbox: list[int], scale: Optional[float], out_h: int, out_w: int,
+def preprocess_image(image: np.ndarray, bbox: List[int], scale: Optional[float], out_h: int, out_w: int,
                      cropper: CropImage) -> np.ndarray:
     crop_params = {
         "org_img": image,
