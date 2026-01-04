@@ -4,6 +4,7 @@
 # per-model probabilities plus the averaged verdict.
 
 import argparse
+import csv
 import glob
 import os
 import warnings
@@ -92,6 +93,7 @@ def compare_models(
     output_dir: str,
     repeat: int,
     warmup: int,
+    save_report: Optional[str],
 ) -> None:
     detector = Detection()
     cropper = CropImage()
@@ -134,6 +136,38 @@ def compare_models(
             f"avg inference {cost:.2f} ms over {repeat} run(s) (warmup {warmup})"
         )
     print(f"Average verdict: {verdict} (score={score:.3f}) using {len(sessions)} model(s)")
+
+    if save_report:
+        os.makedirs(os.path.dirname(save_report) or ".", exist_ok=True)
+        with open(save_report, "w", newline="") as fp:
+            writer = csv.writer(fp)
+            writer.writerow(
+                [
+                    "image",
+                    "model",
+                    "spoof_prob",
+                    "real_prob",
+                    "unsure_prob",
+                    "avg_ms",
+                    "repeat",
+                    "warmup",
+                ]
+            )
+            for path, p0, p1, p2, cost in per_model_results:
+                writer.writerow(
+                    [
+                        image_path,
+                        os.path.basename(path),
+                        f"{p0:.6f}",
+                        f"{p1:.6f}",
+                        f"{p2:.6f}",
+                        f"{cost:.4f}",
+                        repeat,
+                        warmup,
+                    ]
+                )
+            writer.writerow(["summary", verdict, f"{score:.6f}", "", "", "", repeat, warmup])
+        print(f"Saved report to {save_report}")
 
     if save_vis:
         annotated = image.copy()
@@ -209,6 +243,11 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Warmup runs per model before timing (helps stabilize GPU clocks).",
     )
+    parser.add_argument(
+        "--save_report",
+        type=str,
+        help="Optional CSV file path to store per-model probabilities and average inference time.",
+    )
     return parser.parse_args()
 
 
@@ -223,4 +262,5 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         repeat=args.repeat,
         warmup=args.warmup,
+        save_report=args.save_report,
     )
